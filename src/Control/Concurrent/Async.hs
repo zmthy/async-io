@@ -19,13 +19,14 @@ module Control.Concurrent.Async (
     -- * Future type
       Future
 
-    -- * Forking and joining actions
+    -- * Forking and joining tasks
     , runTask
     , runAsync
     , joinTask
 
-    -- * Concatenating asynchronous actions
+    -- * Concatenating actions asynchronously
     , asyncAll
+    , asyncAll_
     , asyncAny
     , asyncBoth
     , asyncEither
@@ -43,8 +44,8 @@ import Control.Monad ( (>=>), void )
 data Future a = Future (MVar (Either IOError a))
 
 
--- | Forks a given action and immediately returns with a 'Future' which can be
--- used to join on the action at some point in the future.
+-- | Forks a given action into a task and immediately returns with a 'Future'
+-- which can be used to join the task at some point in the future.
 runTask :: IO a -> IO (Future a)
 runTask action = do
     mvar <- newEmptyMVar
@@ -55,10 +56,10 @@ runTask action = do
 runAsync :: IO a -> IO ()
 runAsync = void . fork
 
--- | Blocks until the given task completes, at which point it returns the value
--- contained in the future. It is safe to join in multiple places, as this
--- function will return immediately if the task has completed, and tasks cannot
--- be restarted.
+-- | Blocks until the given future is filled, at which point it returns the
+-- value contained in the future. It is safe to join in multiple places, as
+-- this function will return immediately if the task has completed, and tasks
+-- cannot be restarted.
 --
 -- If the task fails, then this function will fail as well (not block forever).
 joinTask :: Future a -> IO a
@@ -76,6 +77,11 @@ joinTask (Future mvar) = readMVar mvar >>= either ioError return
 -- If any of the actions fail, then the whole function will fail as well.
 asyncAll :: [IO a] -> IO [a]
 asyncAll = mapM runTask >=> mapM joinTask
+
+-- | A variant of 'asyncAll' that does not collect the results of the actions.
+-- It will still fail if any of the actions fail.
+asyncAll_ :: [IO a] -> IO ()
+asyncAll_ = mapM runTask >=> mapM_ joinTask
 
 -- | Given a list of IO actions, this function will compose them into a single
 -- IO action that executes each element in the list asynchronously and then

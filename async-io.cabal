@@ -2,6 +2,12 @@ name:           async-io
 version:        0.1
 cabal-version:  >= 1.2
 build-type:     Simple
+homepage:       https://github.com/zimothy/async-io
+synopsis:       A small library supporting asynchronous IO with a fork-join model.
+category:       Concurrent
+license:        MIT
+description:    An API for performing asynchronous IO operations. Built atop Haskell's existing Control.Concurrent library, it adds basic support for a fork-join model using futures, as well as allowing the concatenation of IO actions into combined asynchronous tasks.
+author:         Timothy Jones
 
 library
   hs-source-dirs:  src

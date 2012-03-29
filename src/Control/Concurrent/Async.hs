@@ -41,7 +41,7 @@ import Control.Monad ( (>=>), void )
 
 -- | A forked task resulting from a call to 'runTask'. Can be synchronised with
 -- the current thread with 'joinTask'.
-data Future a = Future (MVar (Either IOError a))
+data Future a = Future { result :: MVar (Either IOError a) }
 
 
 -- | Forks a given action into a task and immediately returns with a 'Future'
@@ -49,8 +49,7 @@ data Future a = Future (MVar (Either IOError a))
 runTask :: IO a -> IO (Future a)
 runTask action = do
     mvar <- newEmptyMVar
-    _ <- forkIO $ try action >>= putMVar mvar
-    return $ Future mvar
+    forkIO (try action >>= putMVar mvar) >> return (Future mvar)
 
 -- | Forks a given action and immediately returns, ignoring the result.
 runAsync :: IO a -> IO ()
@@ -63,7 +62,7 @@ runAsync = void . fork
 --
 -- If the task fails, then this function will fail as well (not block forever).
 joinTask :: Future a -> IO a
-joinTask (Future mvar) = readMVar mvar >>= either ioError return
+joinTask = readMVar . result >=> either ioError return
 
 
 -- | Given a list of IO actions, this function will compose them into a single
@@ -106,11 +105,7 @@ asyncAny tasks = do
 -- Note that it actually runs the first action on the current thread, rather
 -- than spawning a new thread for it. This doesn't affect the semantics.
 asyncBoth :: IO a -> IO b -> IO (a, b)
-asyncBoth a b = do
-    bT <- runTask b
-    a' <- a
-    b' <- joinTask bT
-    return (a', b')
+asyncBoth a b = runTask b >>= (a >>=) . (. (return .) . (,)) . (>>=) . joinTask
 
 -- | Given two IO actions, this function will compose them into a single IO
 -- action that executes both asynchronously and then returns the result of
@@ -119,11 +114,8 @@ asyncBoth a b = do
 asyncEither :: IO a -> IO b -> IO (Either a b)
 asyncEither a b = do
     mvar <- newEmptyMVar
-    let async v f = fork $ try v >>= tryPutMVar mvar . either Left (Right . f)
-    _ <- async a Left
-    _ <- async b Right
-    joinTask $ Future mvar
-
+    let async f = fork . (try >=> tryPutMVar mvar . either Left (Right . f))
+    async Left a >> async Right b >> joinTask (Future mvar)
 
 -- | A helper function which ignores the return values of the input.
 fork :: IO a -> IO ThreadId

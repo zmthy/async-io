@@ -36,7 +36,7 @@ module Control.Concurrent.Async (
 import Control.Concurrent ( ThreadId, forkIO )
 import Control.Concurrent.MVar
 import Control.Exception ( try )
-import Control.Monad ( (>=>), void )
+import Control.Monad ( (>=>), forM_, void )
 
 
 -- | A forked task resulting from a call to 'runTask'. Can be synchronised with
@@ -47,9 +47,8 @@ data Future a = Future { result :: MVar (Either IOError a) }
 -- | Forks a given action into a task and immediately returns with a 'Future'
 -- which can be used to join the task at some point in the future.
 runTask :: IO a -> IO (Future a)
-runTask action = do
-    mvar <- newEmptyMVar
-    forkIO (try action >>= putMVar mvar) >> return (Future mvar)
+runTask action = (newEmptyMVar >>=) . twice $ (. return . Future) .
+                 (>>) . forkIO . (try action >>=) . putMVar
 
 -- | Forks a given action and immediately returns, ignoring the result.
 runAsync :: IO a -> IO ()
@@ -92,10 +91,8 @@ asyncAll_ = mapM runTask >=> mapM_ joinTask
 --
 -- If the fastest action fails, then the whole function will fail as well.
 asyncAny :: [IO a] -> IO a
-asyncAny tasks = do
-    mvar <- newEmptyMVar
-    mapM_ (fork . (try >=> tryPutMVar mvar)) tasks
-    joinTask $ Future mvar
+asyncAny tasks = (newEmptyMVar >>=) . twice $ (. joinTask . Future) .
+                 (>>) . forM_ tasks . (fork .) . (try >=>) . tryPutMVar
 
 -- | Given two IO actions, this function will compose them into a single IO
 -- action that executes both asynchronously and then returns a pair containing
@@ -120,3 +117,6 @@ asyncEither a b = do
 -- | A helper function which ignores the return values of the input.
 fork :: IO a -> IO ThreadId
 fork = forkIO . void
+
+twice :: (a -> a -> b) -> a -> b
+twice f a = f a a

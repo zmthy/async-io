@@ -20,8 +20,7 @@ module Control.Concurrent.Async (
       Future
 
     -- * Forking and joining tasks
-    , runTask
-    , runAsync
+    , forkTask
     , joinTask
 
     -- * Concatenating actions asynchronously
@@ -46,13 +45,9 @@ data Future a = Future { result :: MVar (Either IOError a) }
 
 -- | Forks a given action into a task and immediately returns with a 'Future'
 -- which can be used to join the task at some point in the future.
-runTask :: IO a -> IO (Future a)
-runTask action = (newEmptyMVar >>=) . twice $ (. return . Future) .
-                 (>>) . forkIO . (try action >>=) . putMVar
-
--- | Forks a given action and immediately returns, ignoring the result.
-runAsync :: IO a -> IO ()
-runAsync = void . fork
+forkTask :: IO a -> IO (Future a)
+forkTask action = (newEmptyMVar >>=) . twice $ (. return . Future) .
+                  (>>) . forkIO . (try action >>=) . putMVar
 
 -- | Blocks until the given future is filled, at which point it returns the
 -- value contained in the future. It is safe to join in multiple places, as
@@ -74,12 +69,12 @@ joinTask = readMVar . result >=> either ioError return
 --
 -- If any of the actions fail, then the whole function will fail as well.
 asyncAll :: [IO a] -> IO [a]
-asyncAll = mapM runTask >=> mapM joinTask
+asyncAll = mapM forkTask >=> mapM joinTask
 
 -- | A variant of 'asyncAll' that does not collect the results of the actions.
 -- It will still fail if any of the actions fail.
 asyncAll_ :: [IO a] -> IO ()
-asyncAll_ = mapM runTask >=> mapM_ joinTask
+asyncAll_ = mapM forkTask >=> mapM_ joinTask
 
 -- | Given a list of IO actions, this function will compose them into a single
 -- IO action that executes each element in the list asynchronously and then
@@ -102,21 +97,24 @@ asyncAny tasks = (newEmptyMVar >>=) . twice $ (. joinTask . Future) .
 -- Note that it actually runs the first action on the current thread, rather
 -- than spawning a new thread for it. This doesn't affect the semantics.
 asyncBoth :: IO a -> IO b -> IO (a, b)
-asyncBoth a b = runTask b >>= (a >>=) . (. (return .) . (,)) . (>>=) . joinTask
+asyncBoth a b = forkTask b >>= (a >>=) .
+                (. (return .) . (,)) . (>>=) . joinTask
 
 -- | Given two IO actions, this function will compose them into a single IO
 -- action that executes both asynchronously and then returns the result of
 -- which one completed first. Equivalent to asyncAny in general functionality,
 -- but allows actions of different types to be composed.
 asyncEither :: IO a -> IO b -> IO (Either a b)
-asyncEither a b = do
-    mvar <- newEmptyMVar
-    let async f = fork . (try >=> tryPutMVar mvar . either Left (Right . f))
-    async Left a >> async Right b >> joinTask (Future mvar)
+asyncEither a b = (newEmptyMVar >>=) $ twice . twice $ (. run Right b) . flip
+                  (flip (.) . (>>) . run Left a) ((. joinTask . Future) . (>>))
+  where run = ((fork .) .) . flip . (. tryPutMVar) .
+              ((try >=>) .) . flip (.) . either Left . (Right .)
+
 
 -- | A helper function which ignores the return values of the input.
 fork :: IO a -> IO ThreadId
 fork = forkIO . void
 
+-- | A helper function which applies a value to a given function twice.
 twice :: (a -> a -> b) -> a -> b
 twice f a = f a a
